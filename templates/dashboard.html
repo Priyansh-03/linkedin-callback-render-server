@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>Dashboard - LinkedIn Session</title>
+    <style>
+        body { font-family: Inter, Arial, sans-serif; background:#eef2f6; margin:0; }
+        .wrap { max-width:1100px; margin:30px auto; padding:20px; }
+        .grid { display:flex; gap:20px; }
+        .card { background:white; border-radius:12px; padding:20px; box-shadow:0 6px 18px rgba(0,0,0,0.06); flex:1; }
+        .title { font-size:18px; font-weight:600; margin-bottom:10px; color:#222; }
+        .small { font-size:13px; color:#666; }
+        .token { background:#f6f7fb; padding:10px; border-radius:8px; font-family:monospace; font-size:13px; word-wrap:break-word; }
+        .btn { background:#0073b1; color:white; padding:10px 14px; border-radius:8px; border:none; cursor:pointer; font-size:14px; }
+        .muted { color:#777; font-size:13px; }
+        #events { max-height:200px; overflow:auto; background:#fafafa; padding:10px; border-radius:8px; }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <h1>Agent Dashboard</h1>
+        <div class="grid">
+            <div class="card">
+                <div class="title">Session Info</div>
+                <div class="small">Session ID (cookie): <span id="session_id" class="muted">—</span></div>
+                <div style="margin-top:12px;">
+                    <div class="small">Access Token</div>
+                    <div id="access_token" class="token">not available</div>
+                </div>
+                <div style="margin-top:12px;">
+                    <div class="small">Refresh Token</div>
+                    <div id="refresh_token" class="token">not available</div>
+                </div>
+                <div style="margin-top:12px;">
+                    <div class="small">Expires In</div>
+                    <div id="expires_in" class="muted">—</div>
+                </div>
+
+                <div style="margin-top:16px;">
+                    <button id="autopostBtn" class="btn">Autopost</button>
+                    <button id="logoutBtn" style="margin-left:8px;" class="btn" onclick="location.href='/logout'">Logout</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="title">Realtime Events</div>
+                <div id="events">waiting for events...</div>
+            </div>
+        </div>
+
+        <div style="margin-top:20px;" class="card">
+            <div class="title">Workflow / Notes</div>
+            <ol>
+                <li>Login → you are redirected to LinkedIn and then back to /callback</li>
+                <li>Server exchanges code for token and stores it in SQLite tied to your session cookie</li>
+                <li>Dashboard receives live updates via Server-Sent Events (SSE) and reflects token & workflow changes</li>
+                <li>Autopost uses the stored token to attempt posting to LinkedIn (requires w_member_social)</li>
+            </ol>
+        </div>
+    </div>
+
+<script>
+(async function(){
+    // initial load of session status
+    const s = await fetch('/status').then(r=>r.json());
+    if (s.session_id) document.getElementById('session_id').textContent = s.session_id;
+
+    // SSE connection
+    const evtSource = new EventSource('/stream');
+    const eventsDiv = document.getElementById('events');
+    evtSource.onmessage = function(e){
+        let d = JSON.parse(e.data);
+        const line = document.createElement('div');
+        line.textContent = `[${new Date().toLocaleTimeString()}] ${d.event || 'msg'} — ${d.msg || JSON.stringify(d)}`;
+        eventsDiv.prepend(line);
+
+        // react to token events by reloading status
+        if (d.event === 'token' || d.event === 'connected' || d.event === 'autopost' || d.event === 'logout') {
+            refreshStatus();
+        }
+    };
+
+    window.refreshStatus = async function(){
+        const status = await fetch('/status').then(r=>r.json());
+        if (status.session_id) document.getElementById('session_id').textContent = status.session_id;
+        document.getElementById('access_token').textContent = status.access_token ? 'available' : 'not available';
+        document.getElementById('refresh_token').textContent = status.has_refresh_token ? 'available' : 'not available';
+        document.getElementById('expires_in').textContent = status.expires_in ? (Math.max(0, Math.floor(status.expires_in)) + ' sec') : 'n/a';
+    };
+
+    // initial refresh
+    refreshStatus();
+
+    // Autopost click
+    document.getElementById('autopostBtn').addEventListener('click', async function(){
+        this.disabled = true;
+        this.textContent = 'Posting...';
+        const res = await fetch('/autopost', { method: 'POST' }).then(r=>r.json()).catch(e=>({ok:false,error:e.toString()}));
+        if (res.ok) {
+            alert('Autopost success');
+        } else {
+            alert('Autopost failed: ' + (res.error || JSON.stringify(res)));
+        }
+        this.disabled = false;
+        this.textContent = 'Autopost';
+    });
+})();
+</script>
+</body>
+</html>
